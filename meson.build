@@ -3213,6 +3213,8 @@ foreach target : target_dirs
     arch_srcs += gdbstub_xml
   endif
 
+  old_arch_srcs = arch_srcs
+  old_arch_srcs += 'print_tagged_helper.c'
   t = target_arch[target_base_arch].apply(config_target, strict: false)
   arch_srcs += t.sources()
   arch_deps += t.dependencies()
@@ -3222,11 +3224,34 @@ foreach target : target_dirs
   deps = target_common.dependencies()
 
   target_specific = specific_ss.apply(config_target, strict: false)
+  old_arch_srcs += target_specific.sources()
   arch_srcs += target_specific.sources()
   arch_deps += target_specific.dependencies()
 
+  llvm_dep = dependency('llvm', version : '>= 4.0', modules : ['support'])
+  clang = find_program(llvm_dep.get_variable(configtool: 'bindir') / 'clang')
+  llvm_link = find_program(llvm_dep.get_variable(configtool: 'bindir') / 'llvm-link')
+  opt = find_program(llvm_dep.get_variable(configtool: 'bindir') / 'opt')
+  pass = files('pass')
+  os = custom_target('to_ll',
+      output: 'imhungry.o',
+      input: t.sources(),
+      depend_files: files('pipeline.py'),
+      command: [find_program('pipeline.py'), clang, llvm_link, opt, pass, '@OUTPUT@', '@INPUT@'],
+      build_by_default: true
+      )
+
   lib = static_library('qemu-' + target,
                  sources: arch_srcs + genh,
+                 dependencies: arch_deps,
+                 objects: objects,
+                 include_directories: target_inc,
+                 c_args: c_args,
+                 build_by_default: false,
+                 name_suffix: 'fa')
+
+  lib_2 = static_library('qemu-' + target + '-tagged',
+                 sources: old_arch_srcs + genh,
                  dependencies: arch_deps,
                  objects: objects,
                  include_directories: target_inc,
@@ -3277,6 +3302,17 @@ foreach target : target_dirs
                c_args: c_args,
                dependencies: arch_deps + deps + exe['dependencies'],
                objects: lib.extract_all_objects(recursive: true),
+               link_language: link_language,
+               link_depends: [block_syms, qemu_syms] + exe.get('link_depends', []),
+               link_args: link_args,
+               win_subsystem: exe['win_subsystem'])
+
+    emulator_2 = executable(exe_name + '_2', exe['sources'],
+               sources: os,
+               install: true,
+               c_args: c_args,
+               dependencies: arch_deps + deps + exe['dependencies'],
+               objects: lib_2.extract_all_objects(recursive: true),
                link_language: link_language,
                link_depends: [block_syms, qemu_syms] + exe.get('link_depends', []),
                link_args: link_args,
